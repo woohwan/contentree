@@ -1,0 +1,53 @@
+pipeline {
+    agent {
+        node { label 'jenkins-agent-podman' }
+    }
+    parameters {
+        gitParameter name: 'TAG',
+                     type: 'PT_TAG',
+                     defaultValue: 'main'
+    }
+    environment { 
+        IMAGE_REGISTRY = "dev-mkube-harbor.joins.net";
+        HARBOR_PROJECT = "spring-petclinic";
+        APP_NAME = "spring-petclinic";
+        GIT_BRANCH = "main";
+        GIT = "gitlab.joins.net/mokdong-k8s-soltware-pjt/java-maven-test/spring-petclinic";
+        GIT_PWD = "mokdong-k8s-soltware-pjt/java-maven-test/spring-petclinic";
+        DOCKERFILE_DIR = "Dockerfile"
+        GIT_CHART = "gitlab.joins.net/mokdong-k8s-soltware-pjt/java-maven-test/spring-petclinic-appchart";
+        GIT_CHART_BRANCH = "develop";
+
+    }
+    stages {
+        stage("Checkout") {
+            steps {
+                echo "====================================== stage : Checkout ======================================"
+                git branch: "${GIT_BRANCH}", // git branch: "main",
+                credentialsId: "joins-gitlab-token",
+                url : "https://${GIT}" // url: "https://gitlab.joins.net/mokdong-k8s-soltware-pjt/java-maven-test/spring-petclinic.git"
+                
+                script {
+                    env.GIT_COMMIT_SHORT = sh(returnStdout: true, script: "git rev-parse --short HEAD | tr -d \'\\n\'")
+                    env.GIT_AUTHOR_NAME = sh(returnStdout: true, script: "git log -1 --pretty=format:'%an'")
+                    env.GIT_AUTHOR_EMAIL = sh(returnStdout: true, script: "git log -1 --pretty=format:'%ae'")
+                    env.GIT_TAG = sh(returnStdout: true, script: "git rev-parse --short=10 HEAD").trim()
+                    
+                }
+                echo "${params.TAG}"
+                echo "${GIT_TAG}"
+            }
+        }
+        
+        stage("Finished (check ArgoCD)") {
+            steps {
+                echo "====================================== stage : Finished (check ArgoCD) ======================================"
+                echo "Click URL below and check deploy Pod in Kubernetes"
+                echo "Dev mokdong K8s : https://dev-mkube-argocd.joins.net/applications"
+                echo "Prod mokdong K8s : https://mkube-argocd.joins.net/applications"
+            }
+        }
+        
+    }
+    
+}

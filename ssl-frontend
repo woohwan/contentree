@@ -1,0 +1,87 @@
+pipeline {
+    agent {
+        node { label 'jenkins-agent-podman' }
+    }
+    stages {
+        stage("Checkout App Source") {
+            steps {
+                git branch: "master",
+                credentialsId: "joins-gitlab-token",
+                url: "https://gitlab.joins.net/mokdong-k8s-soltware-pjt/sll/sll-clm-frontend.git"
+                
+                script {
+                    env.GIT_COMMIT_SHORT = sh(returnStdout: true, script: "git rev-parse --short HEAD | tr -d \'\\n\'")
+                    env.GIT_AUTHOR_NAME = sh(returnStdout: true, script: "git log -1 --pretty=format:'%an'")
+                    env.GIT_AUTHOR_EMAIL = sh(returnStdout: true, script: "git log -1 --pretty=format:'%ae'")
+                }
+            }
+        }
+        stage('Build Dockerfile (app build & docker build)') {
+            steps {
+                container('podman') {
+                    withCredentials([usernamePassword(
+                    credentialsId: 'harbor',
+                    usernameVariable: 'USERNAME',
+                    passwordVariable: 'PASSWORD')]) {
+//                        writeFile file: ".npmrc", text: """
+//strict-ssl=false
+//proxy=10.150.44.249:3128
+//https.proxy=10.150.44.249:3128
+//registry=http://registry.npmjs.org/
+//                            """
+                        sh "pwd"
+//                        sh "cp .npmrc /cache/"
+//                        sh "ls -lart /cache/.npmrc"
+                        
+                        //sh "podman build -v ${env.WORKSPACE}/.npmrc:/home/podman/.npmrc"
+                     
+                        //sh "sleep 300"
+                        sh "podman build -t dev-mkube-harbor.joins.net/sll/sll-front:${GIT_COMMIT_SHORT} . -f gitops/Dockerfile"
+                        sh "podman login -u ${USERNAME} -p ${PASSWORD} dev-mkube-harbor.joins.net"
+                    }    
+                }
+            }
+        }
+        stage('push harbor') {
+            steps {
+                container('podman') {
+                    withCredentials([usernamePassword(
+                    credentialsId: 'harbor',
+                    usernameVariable: 'USERNAME',
+                    passwordVariable: 'PASSWORD')]) {
+                        sh "podman push dev-mkube-harbor.joins.net/sll/sll-front:${GIT_COMMIT_SHORT}"
+                    }    
+                }
+            }
+        }
+        stage("Set Appchart (dockerimage tag)") {
+            steps {
+                deleteDir()
+                
+                git branch: "main",
+                credentialsId: "joins-gitlab-token",
+                url: "https://gitlab.joins.net/mokdong-k8s-soltware-pjt/sll/sll-appchart.git"
+                
+                script {
+                    values = readYaml file: "values.yaml"
+                    values.nginx.image.tag = env.GIT_COMMIT_SHORT
+                    writeYaml file: "values.yaml", data: values, overwrite: true
+                    
+                    sh "git config user.name '${env.GIT_AUTHOR_NAME}'"
+                    sh "git config user.email '${env.GIT_AUTHOR_EMAIL}'"
+                    withCredentials([usernamePassword(
+                    credentialsId: 'joins-gitlab-urlencoded',
+                    usernameVariable: 'USERNAME',
+                    passwordVariable: 'PASSWORD')]) {
+                        sh """
+                        git add . && \\
+                        git commit -m '${env.GIT_COMMIT_SHORT}' && \\
+                        git push https://${USERNAME}:${PASSWORD}@gitlab.joins.net/mokdong-k8s-soltware-pjt/sll/sll-appchart HEAD:main || true
+                        """
+                    }
+                }
+                
+            }
+        }
+    }
+}

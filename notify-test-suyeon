@@ -1,0 +1,71 @@
+pipeline {
+    agent {
+        node { label 'jenkins-agent-podman' }
+    }
+    parameters {
+        choice(name: 'BUILD_STATUS', choices: ["SUCCESS", "FAIL"], description: 'Build status')
+    }
+    environment {
+        RECIPIENTS = ""
+        GIT_PROJECT = "park.suyeon/mk8s-test"
+    }
+    stages {
+        stage("Get email") {
+            steps {
+                withCredentials([string(
+                    credentialsId: 'gitlab-admin-token',
+                    variable: 'TOKEN')]) 
+                    {
+                        script {
+                            def gitProjectEncoded = GIT_PROJECT.replaceAll("/", "%2F")
+                            echo "$gitProjectEncoded"
+                            def membersString = sh(returnStdout: true, script: "curl --silent --header 'PRIVATE-TOKEN: $TOKEN' 'https://gitlab.joins.net/api/v4/projects/${gitProjectEncoded}/members/all'")
+                            def members = readJSON text: membersString
+                            def emailAddresses = []
+                            members.each {
+                                def userString = sh(returnStdout: true, script: "curl --silent --header 'PRIVATE-TOKEN: $TOKEN' 'https://gitlab.joins.net/api/v4/users/${it.id}'")
+                                def user = readJSON text: userString
+                                emailAddresses.add(user.email)
+                            }
+                            RECIPIENTS = emailAddresses.join(",")
+                        }
+                    }
+            }
+        }
+        stage('Build') {
+            steps {
+                script {
+                    if("${params.BUILD_STATUS}" == "SUCCESS") {
+                        sh "exit 0"
+                    } else if("${params.BUILD_STATUS}" == "FAIL") {
+                        sh "exit 1"
+                    }
+                }
+            }
+        }
+    }
+    post {
+        success {
+                    script {
+                        def previousResult = currentBuild.getPreviousBuild()?.result
+                        if( previousResult != "SUCCESS") {
+                            emailext (
+                                to: "park.suyeon@joins.net",
+                                subject: "SOLVED: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]'",
+                                body: "Job name: '${env.JOB_NAME}' \nJob number : '${env.BUILD_NUMBER}' \nCheck console output at '${env.BUILD_URL}'")
+                        }else {
+                            sh "echo Bulld Succeeded"
+                        }
+                    }
+        }
+        failure {
+            emailext (
+                to: "park.suyeon@joins.net",
+                subject: "FAILED: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]'",
+                body: "Job name: '${env.JOB_NAME}' \nJob number : '${env.BUILD_NUMBER}' \nCheck console output at '${env.BUILD_URL}'",
+                attachLog: true
+                )
+        }
+    }
+    
+}

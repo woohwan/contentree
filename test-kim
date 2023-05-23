@@ -1,0 +1,77 @@
+pipeline {
+    agent {
+        node { label 'jenkins-agent-podman' }
+    }
+    stages {
+        stage("Checkout") {
+            steps {
+                git branch: "main",
+                credentialsId: "joins-gitlab-token",
+                url: "https://gitlab.joins.net/mokdong-k8s-soltware-pjt/test_kim/test_app.git"
+                
+                script {
+                    env.GIT_COMMIT_SHORT = sh(returnStdout: true, script: "git rev-parse --short HEAD | tr -d \'\\n\'")
+                    env.GIT_AUTHOR_NAME = sh(returnStdout: true, script: "git log -1 --pretty=format:'%an'")
+                    env.GIT_AUTHOR_EMAIL = sh(returnStdout: true, script: "git log -1 --pretty=format:'%ae'")
+                }
+            }
+        }
+        stage('Build') {
+            steps {
+                container('podman') {
+                    withCredentials([usernamePassword(
+                    credentialsId: 'harbor',
+                    usernameVariable: 'USERNAME',
+                    passwordVariable: 'PASSWORD')]) {
+                        writeFile file: "gradle.properties", text: """
+                            systemProp.http.proxyHost=10.150.44.249
+                            systemProp.http.proxyPort=3128
+                            systemProp.http.nonProxyHosts=localhost|127.0.0.1
+                            systemProp.https.proxyHost=10.150.44.249
+                            systemProp.https.proxyPort=3128
+                            systemProp.https.nonProxyHosts=localhost|127.0.0.1
+                            systemProp.https.nonProxyHosts=local
+                            """
+                            
+                        sh "cat gradle.properties"
+                        sh "mkdir -p /cache/.gradle"
+                        sh "ls -al /cache/.gradle"
+                        sh "podman build -v /cache/.gradle:/home/gradle/.gradle -t dev-mkube-harbor.joins.net/test/test_kim:${GIT_COMMIT_SHORT} -f gitops/Dockerfile ."
+                        sh "podman login -u ${USERNAME} -p ${PASSWORD} dev-mkube-harbor.joins.net"
+                        sh "podman push dev-mkube-harbor.joins.net/test/test_kim:${GIT_COMMIT_SHORT}"
+                        sh "ls -al /cache/.gradle"
+                    }    
+                }
+            }
+        }
+        stage("Set image tag") {
+            steps {
+                deleteDir()
+                
+                git branch: "main",
+                credentialsId: "joins-gitlab-token",
+                url: "https://gitlab.joins.net/mokdong-k8s-soltware-pjt/test_kim/test_app_chart.git"
+                
+                script {
+                    values = readYaml file: "values.yaml"
+                    values.backend.image.tag = env.GIT_COMMIT_SHORT
+                    writeYaml file: "values.yaml", data: values, overwrite: true
+                    
+                    sh "git config user.name '${env.GIT_AUTHOR_NAME}'"
+                    sh "git config user.email '${env.GIT_AUTHOR_EMAIL}'"
+                    withCredentials([usernamePassword(
+                    credentialsId: 'joins-gitlab-urlencoded',
+                    usernameVariable: 'USERNAME',
+                    passwordVariable: 'PASSWORD')]) {
+                        sh """
+                        git add . && \\
+                        git commit -m '${env.GIT_COMMIT_SHORT}' && \\
+                        git push https://$USERNAME:$PASSWORD@gitlab.joins.net/mokdong-k8s-soltware-pjt/test_kim/test_app_chart HEAD:main || true 
+                        """
+                    }
+                }
+                
+            }
+        }
+    }
+}

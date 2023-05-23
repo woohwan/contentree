@@ -1,0 +1,43 @@
+pipeline {
+    agent {
+        node { label 'jenkins-agent-helm' }
+    }
+    parameters {
+        gitParameter name: 'TAG',
+                     type: 'PT_TAG',
+                     defaultValue: '1.0.0'
+    }
+    stages {
+        stage("Checkout") {
+            steps {
+                checkout(
+                    [
+                        $class: 'GitSCM',
+                        branches: [[name: "${params.TAG}"]],
+                        extensions: [],
+                        userRemoteConfigs: [[credentialsId: 'saltware-youngwjung', url: "https://gitlab.joins.net/mokdong-k8s-soltware-pjt/java-helm"]]])
+            }
+        }
+        stage('Validate syntax') {
+            steps {
+                container('helm') {
+                    sh "helm template . --debug"
+                }
+            }
+        }
+        stage('Upload charts') {
+            steps {
+                container('helm') {
+                    withCredentials([usernamePassword(
+                    credentialsId: 'harbor',
+                    usernameVariable: 'USERNAME',
+                    passwordVariable: 'PASSWORD')]) {
+                        sh "helm package . --version ${params.TAG}"
+                        sh "ls"
+                        sh "curl -k -u ${USERNAME}:${PASSWORD} -X POST \"https://dev-mkube-harbor.joins.net/api/chartrepo/test/charts\"  -H \"Content-Type: multipart/form-data\" -F \"chart=@java-${params.TAG}.tgz;type=application/x-compressed-tar\" -H \"accept: application/json\""
+                    }
+                }
+            }
+        }
+    }
+}
